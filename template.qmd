@@ -1,7 +1,15 @@
 ---
-title: 'ESM 244 Lab 5 Key: Clustering'
+title: 'ESM 244 Lab 5: Clustering'
+author: "Charlie Thrift"
+format: 
+  html: 
+    embed-resources: true
+    code-fold: show
+    toc: true
 execute:
-  eval: false
+  eval: true
+  message: false
+  warning: false
 ---
 
 
@@ -43,10 +51,10 @@ Variables:
 1. area A, 
 2. perimeter P, 
 3. compactness C = 4*pi*A/P^2, 
-4. length of kernel,
-5. width of kernel,
-6. asymmetry coefficient
-7. length of kernel groove.
+4. length of kernel, l_k
+5. width of kernel, w_k
+6. asymmetry coefficient, asym
+7. length of kernel groove, l_g
 8. variety: Kama=1, Rosa=2, Canadian=3
 
 All of these parameters were real-valued continuous.
@@ -88,8 +96,8 @@ seeds_df <- read_tsv(here::here('data','seeds_dataset.txt'),
                              variety == 2 ~ 'Rosa',
                              variety == 3 ~ 'Canadian',
                              TRUE ~ 'oops'))
+seeds_df$variety <- as.factor(seeds_df$variety)
 ```
-
 
 
 ## Exploratory visualization
@@ -104,12 +112,26 @@ I want you to create three exploratory visuals to help you understand the data a
 
 You can always make more if you want. 
 
+```{r}
+seeds_df_t <- seeds_df %>% 
+  pivot_longer(
+    cols = c(1:7),
+    names_to = "variable"
+  )
 
+ggplot(seeds_df_t, aes(value))+
+  geom_histogram()+
+  facet_grid(variety ~ variable, scales = 'free')+
+  theme_minimal()
 
+ggplot(seeds_df, aes(a, asym))+
+  geom_point(aes(color=variety))+
+  theme_minimal()
 
-
-
-
+ggplot(seeds_df, aes(l_k, w_k))+
+  geom_point(aes(color=variety))+
+  theme_minimal()
+```
 
 
 ## Create a complete, scaled version of the data
@@ -117,6 +139,14 @@ You can always make more if you want.
 Make two separate dataframes where one is the complete cases dataframe and the other is the scaled complete cases. Check out the `scale()` function.
 
 Why would we want two separate dataframes instead of doing it one pipe? Why should we scale the data before going to kmeans-clustering?
+
+```{r}
+seeds_complete <- seeds_df %>% drop_na() # dropped na dataframe
+
+seeds_scale <- seeds_complete %>% 
+  select(-variety) %>% 
+  scale()
+```
 
 
 
@@ -126,12 +156,10 @@ Why would we want two separate dataframes instead of doing it one pipe? Why shou
 First let's make a 'knee' plot to see the performance of kmeans with different number of clusters. Describe what each of the arguments do in the following code chunk. Interpret the results of the graph by making a figure caption in the code chunk.
 
 ```{r}
+#| fig-cap: Number of clusters versus variation explanation. Three groups looks sufficient in balancing the trade-off of adding explanatory power and minimizing redundancy. The kink in the graph is most evident at about 3 clusters.
 
 fviz_nbclust(seeds_scale, FUNcluster = kmeans, method = 'wss', k.max = 10)
-
 ```
-
-
 
 
 Now let's have R recommend the number of clusters.
@@ -157,11 +185,18 @@ The `nbclust` package runs k-means under the hood, but doesn't provide a usuable
 ```{r}
 
 set.seed(10101)
-seeds_km <- kmeans(xxx,yyy,zzz) # kmeans specifying 3 groups to start
+seeds_km <- kmeans(x = seeds_scale,
+                   centers = 3,
+                   nstart = 25) # kmeans specifying 3 groups to start
 ```
 
 
-Examine the output of the kmeans object. Which column contains the classfiication? Join the cluster labels to the ***non***-scaled data.
+Examine the output of the kmeans object. Which column contains the classification? Join the cluster labels to the ***non***-scaled data.
+
+```{r}
+seeds_cl <- data.frame(seeds_complete, 
+                       cluster_no=factor(seeds_km$cluster))
+```
 
 
 
@@ -171,6 +206,12 @@ Now make a ggplot of of area on the x-axis, asymmetric coefficient on the y-axis
 ### On your own:
 ### Plot area and asymmetric index, and include cluster number and variety for comparison:
 
+colors <- c("cornflowerblue","goldenrod","seagreen")
+
+ggplot(seeds_cl, aes(a,asym))+
+  geom_point(aes(shape = variety,color=cluster_no),size =5,alpha = 0.5)+
+  theme_minimal()+
+  scale_color_manual(values = colors)
 
 
 ```
@@ -179,6 +220,15 @@ What do we see from this graph?
 
 
 Can you make a table to show the comparison between the variety and defined clusters?
+```{r}
+#| tbl-cap: Contiency table for the grouping of kmeans and the varieatals of the kernals
+
+
+seeds_cl %>% 
+  select(variety,cluster_no) %>% 
+  table() %>% 
+  knitr::kable()
+```
 
 
 
@@ -195,10 +245,8 @@ We will use the `stats::hclust()` function for agglomerative hierarchical cluste
 Here, we'll read in the WorldBank environmental data (simplified), and keep only the top 20 GHG emitters for this dataset. Examine the dataframe.
 
 ```{r}
-
 # Get the data
 wb_env <- read_csv(here::here("data","wb_env.csv"))
-
 ```
 
 
@@ -211,23 +259,22 @@ Write pseducode for what we will need to do for heirarchal clustering
 ## Wrangle the data
 
 ```{r}
-#| eval: false
-
-# Only keep top 20 greenhouse gas emitters (for simplifying visualization here...)
+# select top 20 GHG emitters
 wb_ghg_20 <- wb_env %>% 
-  
-
+  slice_max(ghg, n = 20)
 ```
+
 
 ## Scale the data
 
 ```{r}
 # Scale the numeric variables (columns 3:7)
+# clean the data, remove NA, scale the numerical variables (no NAs)
 wb_scaled <- wb_ghg_20 %>% 
-
+  select(-c(name,region)) %>% 
+  scale()
 
 rownames(wb_scaled) <- wb_ghg_20$name
-
 ```
 
 
@@ -236,7 +283,7 @@ rownames(wb_scaled) <- wb_ghg_20$name
 Use the `stats::dist()` function to find the Euclidean distance in multivariate space between the different observations (countries):
 
 ```{r}
-
+euc_distance <- dist(wb_scaled,method='euclidean')
 ```
 
 
@@ -256,8 +303,8 @@ hc_complete <- hclust(euc_distance, method = "complete" )
 p_complete<-ggdendrogram(hc_complete, 
              rotate = TRUE) +
   theme_minimal() +
-  labs(x = "Country")
-
+  labs(x = "Country",title = "complete")
+p_complete
 ```
 
 ## Now let's do it by single linkage & compare
@@ -267,7 +314,15 @@ Let's update the linkage to single linkage (recall from lecture: this means that
 ```{r}
 
 # Make single cluster here and plot it
+# Hierarchical clustering (single linkage)
+hc_single <- hclust(euc_distance, method = "single" )
 
+# Plot it
+p_single<-ggdendrogram(hc_single, 
+             rotate = TRUE) +
+  theme_minimal() +
+  labs(x = "Country", title = "single")
+p_single
 ```
 
 
@@ -275,12 +330,8 @@ Let's update the linkage to single linkage (recall from lecture: this means that
 Use patchwork to compare the two outputs and add a descriptive figure caption to the joined plot.
 
 ```{r}
-
+p_single + p_complete + plot_layout(axes = "collect")
 ```
-
-
-
-
 
 # Extras:
 
